@@ -1,32 +1,20 @@
-# Người số 1:
-- Quá trình số 1:
-Cài Python phiên bản 3.9.x
-//Chú ý máy tính có thể sài python 3.x(không train được)
+# starcraft2-agents
 
-Cài thư viện pytorch qua lệnh:
-<pip install torch torchvision>
+Project mẫu cho khóa học: huấn luyện RL agents trên StarCraft II (PySC2)
 
-Cài PYSC2(Môi trường cho StarCraft ReinForce Enviroment):
-<pip install pysc2==3.0.0>
+**Maps**: MoveToBeacon, CollectMineralShards
 
-Cài protobuf phụ trợ cho PYSC2
-<pip install protobuf==3.20.3>
+## Yêu cầu
 
-Cài thư viện phụ trợ:
-<pip install numpy pandas matplotlib pygame absl-py>
+- StarCraft II (phiên bản tương thích với pysc2)
+- Python 3.8+
+- X server nếu chạy headful, hoặc chạy headless (use `DISPLAY`/xvfb)
 
--Quá trình số 2:
-Cài StarCraft:
+## Cách cài
 
-Tải 2 maps (MoveToBeacon, CollectMineralShards) có đuôi .SC2Map từ <https://github.com/deepmind/pysc2#get-the-maps>
-trong đường dẫn pysc2/maps/mini_games
-
-Lưu 2 map vào Documents/StarCraft II/Maps/mini_games/ (ổ C hoặc ổ D nhưng thường là ổ D)
-
-- Quá trình số 3:
-Trên GItHub của nhóm tải các file đã up trên đó(có sẵn môi trường và các folder sắp xếp sẵn để chạy)
-
-Khi Train sẽ nằm ở đường dẫn CT332/StarCraft_RL_project/code
-dùng lệnh python env_setup.py để chạy map
-
-Reward log và biểu đồ lưu ở data:
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+# Nếu cần: cài SC2 theo hướng dẫn pysc2 README
+```

@@ -1,0 +1,9 @@
+pysc2>=0.3.8
+torch>=1.9.0
+numpy
+pyyaml
+matplotlib
+tensorboard
+gym
+opencv-python
+tqdm

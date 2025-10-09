@@ -95,3 +95,13 @@ class DQNAgent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+    def save(self, path):
+        """Lưu trọng số model vào file .pth"""
+        torch.save(self.policy_net.state_dict(), path)
+
+    def load(self, path):
+        """Tải trọng số model từ file .pth"""
+        self.policy_net.load_state_dict(torch.load(path))
+        self.policy_net.eval()
+
+

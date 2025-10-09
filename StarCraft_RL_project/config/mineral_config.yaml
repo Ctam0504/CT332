@@ -1,8 +1,0 @@
-learning_rate: 0.0007
-gamma: 0.99
-eps_start: 1.0
-eps_end: 0.05
-eps_decay: 15000
-batch_size: 64
-num_episodes: 10
-update_target_every: 200

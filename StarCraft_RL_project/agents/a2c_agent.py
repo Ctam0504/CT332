@@ -1,79 +1,96 @@
-# ===================== agents/a2c_agent.py =====================
+# agents/a2c_agent_fast.py
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
+import numpy as np
 
-class ActorCritic(nn.Module):
+# ----------------- Model -----------------
+class A2CModel(nn.Module):
     def __init__(self, input_shape, n_actions):
-        super(ActorCritic, self).__init__()
-        self.conv1 = nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        conv_out_size = self._get_conv_out(input_shape)
-        self.fc = nn.Linear(conv_out_size, 512)
-        self.policy_head = nn.Linear(512, n_actions)
-        self.value_head = nn.Linear(512, 1)
+        super().__init__()
+        c, h, w = input_shape
+        self.conv1 = nn.Conv2d(c, 16, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
 
-    def _get_conv_out(self, shape):
-        o = torch.zeros(1, *shape)
-        o = self.conv1(o)
-        o = self.conv2(o)
-        o = self.conv3(o)
-        return int(o.view(1, -1).size(1))
+        def conv2d_size_out(size, kernel_size, stride):
+            return (size - (kernel_size - 1) - 1) // stride + 1
+
+        convw = conv2d_size_out(conv2d_size_out(w, 8, 4), 4, 2)
+        convh = conv2d_size_out(conv2d_size_out(h, 8, 4), 4, 2)
+        linear_input_size = convw * convh * 32
+
+        self.fc = nn.Linear(linear_input_size, 256)
+        self.actor = nn.Linear(256, n_actions)
+        self.critic = nn.Linear(256, 1)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc(x))
-        policy_logits = self.policy_head(x)
-        value = self.value_head(x)
-        return policy_logits, value
+        return self.actor(x), self.critic(x)
 
+# ----------------- Agent -----------------
 class A2CAgent:
-    def __init__(self, input_shape, n_actions, lr=1e-4, gamma=0.99, device='cpu'):
-        self.device = device
-        self.gamma = gamma
-        self.model = ActorCritic(input_shape, n_actions).to(device)
+    def __init__(self, input_shape, n_actions, lr=1e-4, gamma=0.99, device=None):
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = A2CModel(input_shape, n_actions).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.gamma = gamma
+        self.n_actions = n_actions
 
     def select_action(self, state):
-        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-        logits, _ = self.model(state)
-        prob = F.softmax(logits, dim=-1)
-        action = torch.multinomial(prob, num_samples=1)
-        return action.item(), prob[:, action.item()].item()
+        if isinstance(state, np.ndarray):
+            state = torch.tensor(state, dtype=torch.float32, device=self.device)
+        if state.dim() == 3:
+            state = state.unsqueeze(0)
 
-    def update(self, trajectory):
-        R = 0
-        saved_log_probs = []
-        values = []
-        rewards = []
+        logits, value = self.model(state)
+        probs = F.softmax(logits, dim=-1)
+        dist = torch.distributions.Categorical(probs)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+        return action.item(), log_prob, value
 
-        for step in reversed(trajectory):
-            state, action, reward, next_state, done = step
-            R = reward + self.gamma * R * (1 - done)
-            rewards.insert(0, R)
-
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-            logits, value = self.model(state_tensor)
-            prob = F.softmax(logits, dim=-1)
-            log_prob = torch.log(prob[0, action])
-
-            saved_log_probs.insert(0, log_prob)
-            values.insert(0, value)
-
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        values = torch.cat(values).squeeze()
-        saved_log_probs = torch.stack(saved_log_probs)
-
-        advantage = rewards - values
-        actor_loss = -(saved_log_probs * advantage.detach()).mean()
-        critic_loss = F.mse_loss(values, rewards)
+    # ---- Update từng bước ----
+    def update(self, log_prob, value, reward, next_value, done):
+        target = reward + self.gamma * next_value * (1 - done)
+        advantage = target - value
+        actor_loss = -log_prob * advantage.detach()
+        critic_loss = F.mse_loss(value, target.detach())
         loss = actor_loss + critic_loss
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+    # ---- Batch update (⚡ nhanh hơn nhiều) ----
+    def update_batch(self, log_probs, values, rewards, next_value, dones):
+        values = torch.cat(values)
+        log_probs = torch.stack(log_probs)
+        rewards = torch.stack(rewards)
+        dones = torch.stack(dones)
+
+        next_value = next_value.detach()
+        returns = []
+        R = next_value
+        for step in reversed(range(len(rewards))):
+            R = rewards[step] + self.gamma * R * (1 - dones[step])
+            returns.insert(0, R)
+        returns = torch.cat(returns).detach()
+
+        advantages = returns - values
+        actor_loss = -(log_probs * advantages.detach()).mean()
+        critic_loss = advantages.pow(2).mean()
+        loss = actor_loss + 0.5 * critic_loss
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+    def save(self, path):
+        torch.save(self.model.state_dict(), path)
+
+    def load(self, path):
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        self.model.eval()

@@ -83,7 +83,7 @@ model_dir = os.path.join(ROOT_DIR, "models/dqn")
 log_dir = os.path.join(ROOT_DIR, "logs")
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, "dqn_mineral_rewards_real_fix.csv")
+log_file = os.path.join(log_dir, "dqn_mineral_rewards.csv")
 
 if not os.path.exists(log_file):
     with open(log_file, "w", newline="") as f:

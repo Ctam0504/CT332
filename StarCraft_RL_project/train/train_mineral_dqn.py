@@ -136,7 +136,7 @@ try:
 
 finally:
     print("✅ Training finished! Saving final model...")
-    final_model_path = os.path.join(model_dir, "dqn_mineral_real_fix_final.pth")
+    final_model_path = os.path.join(model_dir, "dqn_mineral_final.pth")
     agent.save(final_model_path)
     print(f"💾 Final model saved at: {final_model_path}")
     print("Closing environment...")

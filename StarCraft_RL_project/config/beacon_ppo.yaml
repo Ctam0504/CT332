@@ -7,5 +7,9 @@ value_loss_coef: 0.5
 batch_size: 32
 update_epochs: 4
 hidden_size: 256
+<<<<<<< HEAD
 num_episodes: 10
+=======
+num_episodes: 3000
+>>>>>>> origin/main
 save_model_every: 50

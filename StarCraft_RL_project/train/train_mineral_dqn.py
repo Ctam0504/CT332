@@ -79,7 +79,7 @@ os.makedirs(model_dir, exist_ok=True)
 os.makedirs(checkpoint_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
 
-log_file = os.path.join(log_dir, "dqn_mineral_rewards.csv")
+log_file = os.path.join(log_dir, "dqn_mineral_multi_rewards.csv")
 if not os.path.exists(log_file):
     with open(log_file, "w", newline="") as f:
         csv.writer(f).writerow(["Episode", "TotalReward"])
@@ -146,7 +146,7 @@ try:
         print(f" Episode {episode+1}/{num_episodes} | Reward={total_reward:.2f}")
 
 finally:
-    final_path = os.path.join(model_dir, "dqn_mineral_final.pth")
+    final_path = os.path.join(model_dir, "dqn_mineral_multi_final.pth")
     agent.save(final_path)
     print(f"💾 Final model saved to {final_path}")
     env.close()

@@ -1,3 +1,4 @@
+# train/train_mineral_dqn_multi.py
 import os
 import sys
 import yaml
@@ -25,9 +26,9 @@ with open(config_path) as f:
     cfg = yaml.safe_load(f)
 
 # --- Init environment ---
-env = MineralEnv(visualize=False)
+env = MineralEnv(visualize=True)
 input_shape = (1, 64, 64)
-n_actions = 2  # 0: no_op, 1: move to mineral
+n_actions = 2  # 0=no_op, 1=move_to_mineral
 
 # --- Init agent ---
 agent = DQNAgent(
@@ -41,31 +42,34 @@ agent = DQNAgent(
     batch_size=cfg["batch_size"]
 )
 
-# --- Helper: map action index to pysc2 action ---
-def map_action(action_idx, obs):
+# --- Helper: map action index to pysc2 action for one unit ---
+def map_action_unit(action_idx, unit, obs):
     move_id = actions.FUNCTIONS.Move_screen.id
     select_id = actions.FUNCTIONS.select_point.id
-    available = obs.observation["available_actions"]
+    avail = obs.observation["available_actions"]
 
-    # --- Nếu chưa chọn unit ---
-    if move_id not in available and select_id in available:
-        player_units = [u for u in obs.observation["feature_units"] if u.alliance == 1]
-        if player_units:
-            u = player_units[0]
-            return actions.FUNCTIONS.select_point("select", [int(u.x), int(u.y)])
-        return actions.FUNCTIONS.no_op()
+    acts = []
 
-    # --- Hành động thực tế ---
+    # Nếu unit chưa được chọn
+    if select_id in avail:
+        acts.append(actions.FUNCTIONS.select_point("select", [int(unit.x), int(unit.y)]))
+        obs = env.step(acts)
+        acts = []
+
+    # Thực hiện action
     if action_idx == 0:
-        return actions.FUNCTIONS.no_op()
-    elif action_idx == 1:
-        player_units = [u for u in obs.observation["feature_units"] if u.alliance == 1]
-        minerals = [u for u in obs.observation["feature_units"] if u.alliance == 3]
-        if player_units and minerals:
-            player = player_units[0]
-            target = min(minerals, key=lambda u: (u.x - player.x) ** 2 + (u.y - player.y) ** 2)
-            return actions.FUNCTIONS.Move_screen("now", [int(target.x), int(target.y)])
-    return actions.FUNCTIONS.no_op()
+        acts.append(actions.FUNCTIONS.no_op())
+    elif action_idx == 1 and move_id in avail:
+        minerals = [m for m in obs.observation["feature_units"] if m.alliance == 3]
+        if minerals:
+            target = min(minerals, key=lambda m: (m.x - unit.x)**2 + (m.y - unit.y)**2)
+            acts.append(actions.FUNCTIONS.Move_screen("now", [int(target.x), int(target.y)]))
+
+    # Nếu không có action nào khả dụng, mặc định no_op
+    if not acts:
+        acts.append(actions.FUNCTIONS.no_op())
+
+    return acts[0]
 
 # --- Prepare dirs ---
 model_dir = os.path.join(ROOT_DIR, "models/dqn")
@@ -78,8 +82,7 @@ os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "dqn_mineral_rewards.csv")
 if not os.path.exists(log_file):
     with open(log_file, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Episode", "TotalReward"])
+        csv.writer(f).writerow(["Episode", "TotalReward"])
 
 # --- Training loop ---
 reward_history = []
@@ -95,34 +98,36 @@ try:
         total_reward = 0
 
         while not done:
-            # --- Lấy state ---
-            state = np.array(obs.observation["feature_screen"]["player_relative"], dtype=np.float32)[None, None, :, :]
+            player_units = [u for u in obs.observation["feature_units"] if u.alliance == 1]
+            if not player_units:
+                obs = env.step([actions.FUNCTIONS.no_op()])
+                continue
 
-            # --- Chọn action ---
-            action_idx = agent.select_action(state)
-            action = map_action(action_idx, obs)
+            # Mỗi unit chọn action riêng
+            for unit in player_units[:2]:  # chỉ lấy 2 unit
+                state = np.array(obs.observation["feature_screen"]["player_relative"], dtype=np.float32)[None, None, :, :]
+                action_idx = agent.select_action(state)
+                action = map_action_unit(action_idx, unit, obs)
 
-            # --- Thực hiện bước ---
-            # --- Thực hiện bước ---
-            next_obs = env.step([action])   # ✅ bọc vào list
-            reward = next_obs.reward
-            done = next_obs.last()
-            next_state = np.array(next_obs.observation["feature_screen"]["player_relative"], dtype=np.float32)[None, None, :, :]
+                # Thực hiện step
+                next_obs = env.step([action])
+                reward = next_obs.reward
+                done = next_obs.last()
+                next_state = np.array(next_obs.observation["feature_screen"]["player_relative"], dtype=np.float32)[None, None, :, :]
 
+                # Penalty nếu đứng yên
+                if action_idx == 0:
+                    reward += penalty
 
-            # --- Thêm penalty nếu đứng yên ---
-            if action_idx == 0:
-                reward += penalty  # penalty cho no_op
+                # Lưu vào memory
+                agent.store_transition(state, action_idx, reward, next_state, done)
 
-            # --- Lưu transition vào memory ---
-            agent.store_transition(state, action_idx, reward, next_state, done)
+                total_reward += reward
+                obs = next_obs
 
-            total_reward += reward
-            obs = next_obs
-
-            # --- Cập nhật batch ngẫu nhiên ---
-            if len(agent.memory) >= agent.batch_size and np.random.rand() < 0.25:
-                agent.update()
+                # Cập nhật batch ngẫu nhiên
+                if len(agent.memory) >= agent.batch_size and np.random.rand() < 0.25:
+                    agent.update()
 
         # --- Cập nhật target định kỳ ---
         if (episode + 1) % update_target_every == 0:
@@ -130,21 +135,17 @@ try:
 
         # --- Lưu checkpoint ---
         if (episode + 1) % save_model_every == 0:
-            ckpt_path = os.path.join(checkpoint_dir, f"dqn_mineral_ep{episode+1}.pth")
+            ckpt_path = os.path.join(checkpoint_dir, f"dqn_mineral_multi_ep{episode+1}.pth")
             torch.save(agent.policy_net.state_dict(), ckpt_path)
 
         # --- Ghi log ---
         reward_history.append(total_reward)
         with open(log_file, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([episode + 1, f"{float(total_reward):.2f}"])
-
-
+            csv.writer(f).writerow([episode + 1, round(total_reward, 2)])
 
         print(f" Episode {episode+1}/{num_episodes} | Reward={total_reward:.2f}")
 
 finally:
-    # --- Save final model ---
     final_path = os.path.join(model_dir, "dqn_mineral_final.pth")
     agent.save(final_path)
     print(f"💾 Final model saved to {final_path}")

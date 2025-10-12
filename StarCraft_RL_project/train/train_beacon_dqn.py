@@ -4,7 +4,6 @@ import yaml
 import numpy as np
 import torch
 import csv
-import time
 from pysc2.lib import actions
 from agents.dqn_agent import DQNAgent
 from envs.beacon_env import BeaconEnv
@@ -25,7 +24,7 @@ config_path = os.path.join(ROOT_DIR, "config/beacon_dqn.yaml")
 with open(config_path) as f:
     cfg = yaml.safe_load(f)
 
-# --- Init environment (no visualize để chạy nhanh hơn) ---
+# --- Init environment ---
 env = BeaconEnv(visualize=False)
 input_shape = (1, 64, 64)
 n_actions = 2
@@ -42,7 +41,7 @@ agent = DQNAgent(
     batch_size=cfg["batch_size"]
 )
 
-# --- Helper ---
+# --- Helper: map action index to pysc2 action ---
 def map_action(action_idx, obs):
     move_id = actions.FUNCTIONS.Move_screen.id
     select_id = actions.FUNCTIONS.select_point.id
@@ -57,7 +56,7 @@ def map_action(action_idx, obs):
 
     if action_idx == 0:
         return actions.FUNCTIONS.no_op()
-    if action_idx == 1:
+    elif action_idx == 1:
         player_units = [u for u in obs.observation["feature_units"] if u.alliance == 1]
         minerals = [u for u in obs.observation["feature_units"] if u.alliance == 3]
         if player_units and minerals:
@@ -91,7 +90,6 @@ try:
         obs = env.reset()
         done = False
         total_reward = 0
-        transitions = []  # gom batch nhỏ
 
         while not done:
             # --- Lấy state ---
@@ -107,13 +105,17 @@ try:
             done = next_obs.last()
             next_state = np.array(next_obs.observation["feature_screen"]["player_relative"], dtype=np.float32)[None, None, :, :]
 
-            # --- Lưu transition ---
+            # --- Thêm penalty nếu đứng yên ---
+            if action_idx == 0:
+                reward -= 0.1  # penalty khi no_op
+
+            # --- Lưu transition vào memory ---
             agent.store_transition(state, action_idx, reward, next_state, done)
 
             total_reward += reward
             obs = next_obs
 
-            # --- Cập nhật batch sau mỗi 10 bước (train nhanh hơn) ---
+            # --- Cập nhật batch sau mỗi bước với xác suất ---
             if len(agent.memory) >= agent.batch_size and np.random.rand() < 0.25:
                 agent.update()
 
@@ -121,7 +123,7 @@ try:
         if (episode + 1) % update_target_every == 0:
             agent.update_target()
 
-        # --- Lưu checkpoint nhanh ---
+        # --- Lưu checkpoint ---
         if (episode + 1) % save_model_every == 0:
             ckpt_path = os.path.join(checkpoint_dir, f"dqn_beacon_ep{episode+1}.pth")
             torch.save(agent.policy_net.state_dict(), ckpt_path)
@@ -133,7 +135,6 @@ try:
             writer.writerow([episode + 1, total_reward])
 
         print(f" Episode {episode+1}/{num_episodes} | Reward={total_reward:.2f}")
-
 
 finally:
     # --- Save final model ---

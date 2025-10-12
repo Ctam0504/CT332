@@ -1,3 +1,4 @@
+# --- agents/dqn_agent.py ---
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -57,6 +58,7 @@ class DQNAgent:
         self.steps_done = 0
 
     def select_action(self, state):
+        """state phải 4D: (1,C,H,W)"""
         self.steps_done += 1
         eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
                         np.exp(-1. * self.steps_done / self.eps_decay)
@@ -78,30 +80,35 @@ class DQNAgent:
         if len(self.memory) < self.batch_size:
             return
 
+        # --- Lấy batch mẫu ngẫu nhiên ---
         batch = random.sample(self.memory, self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        states = torch.tensor(np.array(states), dtype=torch.float32).squeeze(2).to(device)
-        next_states = torch.tensor(np.array(next_states), dtype=torch.float32).squeeze(2).to(device)
-        actions = torch.tensor(actions, dtype=torch.long).unsqueeze(1).to(device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+        # --- Chuyển sang tensor và reshape đúng ---
+        # shape: [batch_size, 1, H, W]
+        states = torch.tensor(np.array(states), dtype=torch.float32).reshape(self.batch_size, 1, 64, 64).to(device)
+        next_states = torch.tensor(np.array(next_states), dtype=torch.float32).reshape(self.batch_size, 1, 64, 64).to(device)
+        actions = torch.tensor(actions, dtype=torch.long).unsqueeze(1).to(device)  # [batch, 1]
+        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device)  # [batch, 1]
+        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)  # [batch, 1]
 
-        q_values = self.policy_net(states).gather(1, actions)
-        next_q_values = self.target_net(next_states).max(1)[0].detach().unsqueeze(1)
-        expected_q_values = rewards + self.gamma * next_q_values * (1 - dones)
+        # --- Q-values hiện tại ---
+        q_values = self.policy_net(states).gather(1, actions)  # [batch, 1]
 
+        # --- Q-values mục tiêu ---
+        with torch.no_grad():
+            next_q_values = self.target_net(next_states).max(1)[0].unsqueeze(1)  # [batch, 1]
+            expected_q_values = rewards + self.gamma * next_q_values * (1 - dones)
+
+        # --- Cập nhật mạng ---
         loss = F.mse_loss(q_values, expected_q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
     def save(self, path):
-        """Lưu trọng số model vào file .pth"""
         torch.save(self.policy_net.state_dict(), path)
 
     def load(self, path):
-        """Tải trọng số model từ file .pth"""
         self.policy_net.load_state_dict(torch.load(path))
         self.policy_net.eval()
-
-
